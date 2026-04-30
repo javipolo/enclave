@@ -139,7 +139,7 @@ echo -p "Building local cache .. " -n1 -s
     # get oc / helm / mirror content etc
     ansible-playbook playbooks/01-prepare.yaml -e@$global_vars -e@$certs_vars --tags download-control-binaries 2>&1 | tee -a ${log}
     ansible-playbook playbooks/02-mirror.yaml -e@$global_vars -e@$certs_vars --tags mirror-registry 2>&1 | tee -a ${log}
-    ansible-playbook playbooks/03-deploy.yaml -e@$global_vars -e@$certs_vars --tags configure-abi 2>&1 | tee -a ${log}
+    # ansible-playbook playbooks/03-deploy.yaml -e@$global_vars -e@$certs_vars --tags configure-abi 2>&1 | tee -a ${log}
 echo -e "\e[38;5;10m Done...\033[0m"; date
 
 echo -p "Sanity lockdown .. " -n1 -s
@@ -147,25 +147,28 @@ echo -p "Sanity lockdown .. " -n1 -s
     # check state on LZ machine, lock down users, network NAT disable etc
 echo -e "\e[38;5;10m Done...\033[0m"; date
 
-echo -p "Acquiring Hardware .. " -n1 -s
-    # setup content for and boot machines
-    ansible-playbook playbooks/03-deploy.yaml -e@$global_vars -e@$certs_vars --tags hardware,pre-install-validate 2>&1 | tee -a ${log}
-echo -e "\e[38;5;10m Done...\033[0m"; date
-
-echo -p "Deploying management cluster .. " -n1 -s
-    # deploy Red Hat payload cluster
-    ansible-playbook playbooks/03-deploy.yaml -e@$global_vars -e@$certs_vars --tags wait-deployment 2>&1 | tee -a ${log}
-echo -e "\e[38;5;10m Done...\033[0m"; date
-
-echo -p "Post install config.. " -n1 -s
-    # Apply SSL certificates
-    ansible-playbook playbooks/04-post-install.yaml -e@$global_vars -e@$certs_vars --tags post-install-config 2>&1 | tee -a ${log}
-echo -e "\e[38;5;10m Done...\033[0m"; date
-
+# echo -p "Acquiring Hardware .. " -n1 -s
+#     # setup content for and boot machines
+#     ansible-playbook playbooks/03-deploy.yaml -e@$global_vars -e@$certs_vars --tags hardware,pre-install-validate 2>&1 | tee -a ${log}
+# echo -e "\e[38;5;10m Done...\033[0m"; date
+#
+# echo -p "Deploying management cluster .. " -n1 -s
+#     # deploy Red Hat payload cluster
+#     ansible-playbook playbooks/03-deploy.yaml -e@$global_vars -e@$certs_vars --tags wait-deployment 2>&1 | tee -a ${log}
+# echo -e "\e[38;5;10m Done...\033[0m"; date
+#
+# echo -p "Post install config.. " -n1 -s
+#     # Apply SSL certificates
+#     ansible-playbook playbooks/04-post-install.yaml -e@$global_vars -e@$certs_vars --tags post-install-config 2>&1 | tee -a ${log}
+# echo -e "\e[38;5;10m Done...\033[0m"; date
+#
 echo -p "Deploying management apps  .. " -n1 -s
     # deploy Red Hat payload cluster
     ansible-playbook playbooks/05-operators.yaml -e@$global_vars -e@$certs_vars --tags operators 2>&1 | tee -a ${log}
 echo -e "\e[38;5;10m Done...\033[0m"; date
+
+echo "AQUI ACABAMOS"
+exit 0
 
 echo -p "Clair disconnected .." -n1 -s
     ansible-playbook playbooks/06-day2.yaml -e@$global_vars -e@$certs_vars --tags clair-disconnected 2>&1 | tee -a ${log}
