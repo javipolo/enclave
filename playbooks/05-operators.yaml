@@ -41,19 +41,38 @@
         - foundation-plugins
         - operators
 
-    - name: Wait for the async task mirror_registry_post (operators and additional images)
-      when: disconnected | default(true) | bool
-      ansible.builtin.include_tasks:
-        file: tasks/background_task_wait.yaml
-        apply:
-          tags:
-            - foundation-plugins
-            - operators
-      tags:
-        - foundation-plugins
-        - operators
-      vars:
-        task_id: mirror_post
+    block:
+      - name: Wait for the async task mirror_registry_post (operators and additional images)
+        when: disconnected | default(true) | bool
+        ansible.builtin.include_tasks:
+          file: tasks/background_task_wait.yaml
+          apply:
+            tags:
+              - foundation-plugins
+              - operators
+        tags:
+          - foundation-plugins
+          - operators
+        vars:
+          task_id: mirror_post
+    rescue:
+      - name: Read oc-mirror log tail
+        ansible.builtin.command:
+          argv:
+            - tail
+            - -n
+            - "10"
+            - "{{ _oc_mirror_quay_log }}"
+        register: _oc_mirror_quay_tail
+        changed_when: false
+        failed_when: false
+      - name: oc-mirror failed
+        ansible.builtin.fail:
+          msg: |-
+            oc-mirror to internal Quay failed after {{ r_oc_mirror_post.attempts }} attempts.
+            {{ _oc_mirror_quay_tail.stdout | default('Unable to read oc-mirror log tail.') }}
+            Full log: {{ _oc_mirror_quay_log }}
+
 
     # - name: Configure mirror for operators and additional images
     #   when: disconnected | default(true) | bool

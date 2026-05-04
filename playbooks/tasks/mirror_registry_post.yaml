@@ -4,6 +4,15 @@
     src: ../../templates/imagesetconfiguration-post.yaml.j2
     dest: "{{ workingDir }}/config/imagesetconfiguration-post.yaml"
 
+- name: Set oc-mirror log path
+  ansible.builtin.set_fact:
+    _oc_mirror_quay_log: "{{ workingDir }}/logs/oc-mirror.progress.quay.{{ lookup('pipe', 'date +%s') }}.log"
+
+- name: Show oc-mirror log path
+  ansible.builtin.debug:
+    msg: "oc-mirror log file: {{ _oc_mirror_quay_log }}"
+
+
 - name: Mirror post-installation operators and additional images
   ansible.builtin.shell: |
     _retry=1
@@ -19,7 +28,7 @@
       --parallel-images 10 --parallel-layers 10 \
       --retry-times 10 --retry-delay 0 \
       docker://{{ quayHostname }}:8443 \
-      > {{ workingDir }}/logs/oc-mirror-post.progress.$(date +%s).log 2>&1
+      > "{{ _oc_mirror_quay_log }}" 2>&1
     do
       if [ $_retry -ge $_max_retries ]; then
         echo "Max retries reached"
