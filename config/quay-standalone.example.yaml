@@ -1,0 +1,128 @@
+# Red Hat Quay Standalone Configuration Example
+#
+# Copy this file to 'quay-standalone.yaml' and customize as needed.
+# This configuration can be used with the quay-standalone.yaml playbook.
+#
+# Usage:
+#   cp config/quay-standalone.example.yaml config/quay-standalone.yaml
+#   # Edit the file with your values
+#   ansible-playbook playbooks/quay-standalone.yaml -e @config/quay-standalone.yaml
+
+# =============================================================================
+# REQUIRED CONFIGURATION
+# =============================================================================
+
+# Working directory containing cluster configuration and binaries
+workingDir: /home/cloud-user
+
+# OpenShift cluster information
+clusterName: my-cluster
+baseDomain: example.com
+
+# Quay administrator credentials
+# These will be used to create the initial admin user
+quayUser: quayadmin
+quayPassword: MySecurePassword123! # notsecret
+
+# =============================================================================
+# OPTIONAL CONFIGURATION
+# =============================================================================
+
+# Deployment mode
+# Set to false for connected deployments that can pull from upstream registries
+disconnected: true
+
+# Storage backend plugin
+# Uncomment and set to your storage plugin: 'lvms' or 'odf'
+# If not specified, the playbook will auto-detect available storage
+# storage_plugin: lvms
+
+# =============================================================================
+# QUAY CONFIGURATION
+# =============================================================================
+
+# Quay feature flags
+quayFeatureProxyStorage: true
+quayFeatureQuotaManagement: false
+quayMaximumLayerSize: "100G"
+
+# Storage backend defaults
+quayBackendDefaults:
+  storage_path: /datastorage/registry
+
+# Additional defaults for RadosGW storage (ODF/Ceph)
+quayBackendRGWDefaults:
+  is_secure: true
+  port: 443
+  minimum_chunk_size_mb: 100
+  maximum_chunk_size_mb: 500
+  server_side_assembly: true
+
+# OAuth application configuration
+quayOAuthApp:
+  enabled: true
+  name: "default-application"
+  organization: "default-org"
+  redirect_uri: "http://localhost:8080/callback"
+  scopes: "repo:read repo:write repo:admin repo:create user:read user:admin org:admin"
+
+# =============================================================================
+# NAMESPACE CONFIGURATION
+# =============================================================================
+
+# Kubernetes namespaces
+quay_namespace: quay-enterprise
+quay_operator_namespace: openshift-operators
+
+# =============================================================================
+# ADVANCED CONFIGURATION
+# =============================================================================
+
+# Kubernetes operation settings
+k8s_retries: 5
+k8s_delay: 10
+
+# oc-mirror settings (for disconnected mode)
+ocMirrorLogLevel: info
+ocMirrorParallelImages: 4
+ocMirrorParallelLayers: 4
+ocMirrorParallelLayersLocalStorage: 2  # Lower parallelism for local storage
+ocMirrorRetryTimes: 3
+ocMirrorRetryDelay: 30s
+ocMirrorImageTimeout: 15m
+ocMirrorAnsibleRetries: 2
+ocMirrorAnsibleDelay: 60
+
+# =============================================================================
+# EXAMPLE CONFIGURATIONS
+# =============================================================================
+
+# Example 1: Minimal disconnected setup with LVMS
+#workingDir: /home/cloud-user
+#clusterName: edge-cluster-01
+#baseDomain: edge.example.com
+#quayUser: admin
+#quayPassword: SecurePass123! # notsecret
+#disconnected: true
+#storage_plugin: lvms
+
+# Example 2: Connected setup with ODF storage
+#workingDir: /opt/enclave
+#clusterName: dev-cluster
+#baseDomain: dev.redhat.com
+#quayUser: quayadmin
+#quayPassword: DevPassword123! # notsecret
+#disconnected: false
+#storage_plugin: odf
+
+# Example 3: High-performance disconnected setup
+#workingDir: /home/cloud-user
+#clusterName: prod-cluster
+#baseDomain: prod.example.com
+#quayUser: admin
+#quayPassword: ProdPassword123! # notsecret
+#disconnected: true
+#storage_plugin: odf
+#ocMirrorParallelImages: 8
+#ocMirrorParallelLayers: 6
+#quayFeatureQuotaManagement: true

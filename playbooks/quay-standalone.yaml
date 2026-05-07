@@ -1,0 +1,240 @@
+---
+# Red Hat Quay - Standalone Installation and Configuration Playbook
+#
+# This playbook installs and configures Red Hat Quay operator and registry
+# with support for both connected and disconnected deployment modes.
+#
+# Prerequisites:
+# - OpenShift cluster must be deployed and accessible
+# - Storage backend (LVMS/ODF) should be configured if using local storage
+# - Working directory must contain required configuration files
+#
+# Features:
+# - Installs Quay operator
+# - Creates and configures QuayRegistry instance
+# - Sets up initial user and OAuth application
+# - Configures storage backend integration
+# - Handles disconnected mirroring (if enabled)
+# - Updates cluster pull secrets
+#
+# Usage:
+#   # 1. Copy and customize the configuration template:
+#   cp config/quay-standalone.example.yaml workingDir/config/quay-standalone.yaml
+#   # Edit the file with your values
+#
+#   # 2. Run the playbook (config will be loaded automatically):
+#   ansible-playbook playbooks/quay-standalone.yaml -e workingDir=/home/cloud-user
+#
+#   # Alternative: Pass configuration directly via command line
+#   ansible-playbook playbooks/quay-standalone.yaml -e @config/quay-standalone.yaml
+#
+#   # Override specific variables if needed
+#   ansible-playbook playbooks/quay-standalone.yaml -e workingDir=/home/cloud-user -e disconnected=false
+
+- name: Red Hat Quay - Standalone Installation and Configuration
+  hosts: localhost
+  gather_facts: false
+  environment:
+    PATH: "{{ workingDir }}/bin:{{ lookup('env', 'PATH') }}"
+    KUBECONFIG: "{{ workingDir }}/ocp-cluster/auth/kubeconfig"
+
+  vars:
+    # Default Quay configuration
+    quay_namespace: "quay-enterprise"
+    quay_operator_namespace: "openshift-operators"
+
+  tasks:
+    - name: Load common variables
+      ansible.builtin.include_tasks:
+        file: common/load-vars.yaml
+        apply:
+          tags: always
+      tags: always
+
+    - name: Load Quay-specific configuration
+      ansible.builtin.include_vars: "{{ quay_vars_file | default('../config/quay-standalone.yaml') }}"
+      tags: always
+
+    - name: Display Quay installation mode
+      ansible.builtin.debug:
+        msg: |
+          Installing Red Hat Quay in {{ 'disconnected' if (disconnected | default(true)) else 'connected' }} mode
+          Namespace: {{ quay_namespace }}
+          User: {{ quayUser | default('quayadmin') }}
+          OAuth Application: {{ 'enabled' if (quayOAuthApp.enabled | default(true)) else 'disabled' }}
+      tags: always
+
+    - name: Validate required variables
+      ansible.builtin.assert:
+        that:
+          - workingDir is defined
+          - clusterName is defined
+          - baseDomain is defined
+          - quayUser is defined
+          - quayPassword is defined
+        fail_msg: "Required variables are missing. Please ensure workingDir, clusterName, baseDomain, quayUser, and quayPassword are defined."
+      tags: always
+
+    # Phase 1: Operator Installation
+    - name: Create Quay operator namespace
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ quay_namespace }}"
+            labels:
+              openshift.io/cluster-monitoring: "true"
+      register: r_quay_namespace
+      retries: "{{ k8s_retries | default(3) }}"
+      delay: "{{ k8s_delay | default(5) }}"
+      until: r_quay_namespace is success
+      tags:
+        - quay-operator
+        - quay-namespace
+
+    - name: Install Quay operator
+      ansible.builtin.include_tasks:
+        file: tasks/configure_operators.yaml
+      vars:
+        # Filter to only install quay-operator
+        operators_filter: "quay-operator"
+      tags:
+        - quay-operator
+        - operators
+
+    - name: Wait for Quay operator to be ready
+      kubernetes.core.k8s_info:
+        api_version: operators.coreos.com/v1alpha1
+        kind: ClusterServiceVersion
+        namespace: "{{ quay_operator_namespace }}"
+        label_selectors:
+          - "operators.coreos.com/quay-operator.{{ quay_operator_namespace }}"
+      register: quay_operator_csv
+      retries: 30
+      delay: 10
+      until:
+        - quay_operator_csv.resources is defined
+        - quay_operator_csv.resources | length > 0
+        - quay_operator_csv.resources[0].status.phase is defined
+        - quay_operator_csv.resources[0].status.phase == "Succeeded"
+      tags:
+        - quay-operator
+
+    # Phase 2: Storage Backend Configuration
+    - name: Configure storage backend for Quay
+      ansible.builtin.debug:
+        msg: "Storage plugin: {{ storage_plugin | default('none configured') }}"
+      tags:
+        - quay-storage
+
+    - name: Run storage plugin Quay preparation tasks
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../plugins/{{ storage_plugin }}/tasks/quay.yaml"
+      when:
+        - storage_plugin is defined
+        - lookup('ansible.builtin.fileglob', playbook_dir ~ '/../plugins/' ~ storage_plugin ~ '/tasks/quay.yaml') | length > 0
+      tags:
+        - quay-storage
+
+    # Phase 3: Quay Registry Configuration and Deployment
+    - name: Configure and deploy Quay registry
+      ansible.builtin.include_tasks:
+        file: "../operators/quay-operator/tasks.yaml"
+      tags:
+        - quay-registry
+        - quay-config
+        - quay-oauth
+
+    # Phase 4: Verification and Status
+    - name: Verify Quay installation
+      block:
+        - name: Check QuayRegistry status
+          kubernetes.core.k8s_info:
+            api_version: quay.redhat.com/v1
+            kind: QuayRegistry
+            name: registry
+            namespace: "{{ quay_namespace }}"
+          register: quay_registry_status
+
+        - name: Display Quay registry status
+          ansible.builtin.debug:
+            msg: |
+              Quay Registry Status:
+              - Name: {{ quay_registry_status.resources[0].metadata.name }}
+              - Phase: {{ quay_registry_status.resources[0].status.currentVersion | default('Unknown') }}
+              - Conditions: {{ quay_registry_status.resources[0].status.conditions | map(attribute='type') | list }}
+              - Registry Endpoint: https://registry-quay-{{ quay_namespace }}.apps.{{ clusterName }}.{{ baseDomain }}
+          when:
+            - quay_registry_status.resources is defined
+            - quay_registry_status.resources | length > 0
+
+        - name: Check Quay route accessibility
+          ansible.builtin.uri:
+            url: "https://registry-quay-{{ quay_namespace }}.apps.{{ clusterName }}.{{ baseDomain }}/health/instance"
+            method: GET
+            validate_certs: false
+            status_code: [200, 404]
+          register: quay_health_check
+          retries: 5
+          delay: 30
+          until: quay_health_check.status == 200
+          ignore_errors: true
+
+        - name: Report Quay health status
+          ansible.builtin.debug:
+            msg: |
+              Quay Health Check: {{ 'PASSED' if quay_health_check.status == 200 else 'FAILED' }}
+              {% if quay_health_check.status != 200 %}
+              Health check failed. Quay may still be starting up.
+              {% endif %}
+      tags:
+        - quay-verify
+
+    # Phase 5: Post-Installation Summary
+    - name: Display installation summary
+      ansible.builtin.debug:
+        msg: |
+          =======================================================
+          Red Hat Quay Installation Complete!
+          =======================================================
+
+          Quay Registry URL: https://registry-quay-{{ quay_namespace }}.apps.{{ clusterName }}.{{ baseDomain }}
+          Admin User: {{ quayUser }}
+          Namespace: {{ quay_namespace }}
+          Mode: {{ 'Disconnected' if (disconnected | default(true)) else 'Connected' }}
+          Storage Backend: {{ storage_plugin | default('Default') }}
+          OAuth App: {{ 'Configured' if (quayOAuthApp.enabled | default(true)) else 'Disabled' }}
+
+          Next Steps:
+          1. Access the Quay web console using the URL above
+          2. Log in with the admin credentials provided
+          3. Create organizations and repositories as needed
+          {% if disconnected | default(true) %}
+          4. Mirror images have been configured for disconnected use
+          {% endif %}
+
+          Configuration Files:
+          - Pull Secret: {{ workingDir }}/config/pull-secret.quay.json
+          {% if quay_initial_token is defined %}
+          - Initial Token stored in Secret: quay-initial-user-token (namespace: {{ quay_namespace }})
+          {% endif %}
+      tags: always
+
+  handlers:
+    - name: Restart machine-config pools
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: machineconfiguration.openshift.io/v1
+          kind: MachineConfigPool
+          metadata:
+            name: "{{ item }}"
+          spec:
+            paused: false
+      loop:
+        - master
+        - worker
+      listen: "restart mcp"
+      ignore_errors: true
